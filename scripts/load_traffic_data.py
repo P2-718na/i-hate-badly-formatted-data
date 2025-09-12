@@ -16,7 +16,7 @@ cursor.execute("DROP TABLE IF EXISTS traffic_data;")
 # Create table
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS traffic_data (
-        edge_id TEXT,
+        edge_id INTEGER,
         hour_slot INTEGER,
         speed_mean REAL,
         count_mean REAL,
@@ -30,9 +30,7 @@ cursor.execute('''
         max_stddev REAL,
         stddev_stddev REAL,
         confidence_stddev REAL,
-        edge_T BOOLEAN,
-        edge_F BOOLEAN,
-        FOREIGN_KEY 
+        FOREIGN KEY(edge_id) REFERENCES geo_edges(edge_id) 
     );
 ''')
 
@@ -40,17 +38,20 @@ cursor.execute('''
 row_count = 0
 progress_interval = 10000  # Print progress every 10,000 rows
 
+total_rows = 9192098
+
 with open(csv_file_path, newline='') as csvfile:
     reader = csv.DictReader(csvfile)
     for row in reader:
 
         if  row['edge_id'][-1] not in ["T", "F"]:
-            raise "DIOCANR"
-        
-        edge_T =  row['edge_id'][-1] == "T"
+            raise "bad data"
+
+        edge_F =  row['edge_id'][-1] == "T"
+        edge_id = int(row["edge_id"][:-1])
 
         values = (
-            row['edge_id'],
+            -edge_id if edge_F else edge_id, # geojson is retarded. This is the correct encoding, otherwise we would have traffic recorded for invalid roads.
             int(row['hour_slot']),
             float(row['speed_mean']),
             float(row['count_mean']),
@@ -63,21 +64,23 @@ with open(csv_file_path, newline='') as csvfile:
             float(row['min_stddev']),
             float(row['max_stddev']),
             float(row['stddev_stddev']),
-            float(row['confidence_stddev']),
-            edge_T,
-            not edge_T
+            float(row['confidence_stddev'])
         )
+        # there is data recorded for roads which should not be accessible. 
+        # Like 1268077057.
+        # OR IGNORE does not work here.
         cursor.execute('''
             INSERT INTO traffic_data (
                 edge_id, hour_slot, speed_mean, count_mean, min_mean, max_mean,
                 stddev_mean, confidence_mean, speed_stddev, count_stddev,
-                min_stddev, max_stddev, stddev_stddev, confidence_stddev, edge_T, edge_F
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                min_stddev, max_stddev, stddev_stddev, confidence_stddev
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         ''', values)
 
         row_count += 1
+
         if row_count % progress_interval == 0:
-            print(f"{row_count} rows inserted...")
+            print(f" {'%.1f' % (row_count/total_rows*100)}% - {row_count} rows inserted...", end="\r")
 
 # Final commit and close
 conn.commit()

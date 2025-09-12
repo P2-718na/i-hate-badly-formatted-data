@@ -1,17 +1,13 @@
 import sqlite3
 import json
-import geopandas as gpd
 
 # File paths
 geojson_path = '../data/raw/genova_full.geojson'
 sqlite_db_path = '../data/genova.db'
 
 # Load GeoJSON
-gdf = gpd.read_file(geojson_path)
-
-# Convert geometry and forbidden_turns to strings
-gdf['geometry'] = gdf['geometry'].apply(lambda geom: geom.wkt)
-gdf['forbidden_turns'] = gdf['forbidden_turns'].apply(lambda x: json.dumps(x))
+with open(geojson_path) as f:
+    gdf = json.load(f)
 
 # nth bit of a
 def nth_bit(a, n):
@@ -27,62 +23,124 @@ exclusive_encodings = {
     # other two bits are unknown lol kys
 }
 
-for category, code in exclusive_encodings.items():
-    gdf["F_" + category] = gdf["exclusive_FT"].apply(lambda a: nth_bit(a, code))
-    gdf["T_" + category] = gdf["exclusive_TF"].apply(lambda a: nth_bit(a, code))
-
-
-gdf = gdf.drop("exclusive_FT", axis=1)
-gdf = gdf.drop("exclusive_TF", axis=1)
-gdf = gdf.drop("poly_lid", axis=1)
-
 # Connect to SQLite
 conn = sqlite3.connect(sqlite_db_path)
+cursor = conn.cursor()
 
-conn.execute("PRAGMA foreign_keys = ON")
-conn.execute("DROP TABLE IF EXISTS geo_edges;")
+cursor.execute("PRAGMA foreign_keys = ON")
+cursor.execute("DROP TABLE IF EXISTS geo_edges;")
 
-# Create table with explicit schema
-# speed_cat INTEGER needs to be added, but formatted properly before
-# poly_cid corresponds to traffic data edge ID
-
-# TODO split Poly cd into T F separately kill yourself midcity
 create_table_sql = """
 CREATE TABLE geo_edges (
-    name TEXT,
-    poly_cid INTEGER,
-    poly_length REAL,
-    poly_nF INTEGER,
-    poly_nT INTEGER,
-    speed_FT REAL,
-    speed_TF REAL,
+    edge_id INTEGER NOT NULL UNIQUE,
+    is_valid BOOLEAN,
+    edge_length REAL,
+    node_from_id INTEGER,
+    node_to_id INTEGER,
+    speed REAL,
     speed_cat INTEGER,
-    width_FT REAL,
-    width_TF REAL,
-    F_car BOOLEAN,
-    F_pawn BOOLEAN,
-    F_bus BOOLEAN,
-    F_metro BOOLEAN,
-    F_train BOOLEAN,
-    F_bike BOOLEAN,
-    T_car BOOLEAN,
-    T_pawn BOOLEAN,
-    T_bus BOOLEAN,
-    T_metro BOOLEAN,
-    T_train BOOLEAN,
-    T_bike BOOLEAN,
+    width REAL,
+    car_allowed BOOLEAN,
+    pawn_allowed BOOLEAN,
+    bus_allowed BOOLEAN,
+    metro_allowed BOOLEAN,
+    train_allowed BOOLEAN,
+    bike_allowed BOOLEAN,
     forbidden_turns TEXT,
+    street_name TEXT,
     geometry TEXT,
-    FOREIGN KEY(poly_nF) REFERENCES geo_nodes(id),
-    FOREIGN KEY(poly_nT) REFERENCES geo_nodes(id)
+    PRIMARY KEY(edge_id),
+    FOREIGN KEY(node_from_id) REFERENCES geo_nodes(id),
+    FOREIGN KEY(node_to_id) REFERENCES geo_nodes(id)
 );
 """
+cursor.execute(create_table_sql)
 
-conn.execute(create_table_sql)
 
-# Insert data
-# Do not use if_exists="replace" otherwise pandas WILL break everything (shitty ass library devs kys please)
-gdf.to_sql('geo_edges', conn, if_exists='append', index=False)
+for row in gdf["features"]:
+    props = row["properties"]
+    coords = row["geometry"]["coordinates"]
+
+    street_name = props["name"]
+    edge_id = props["poly_cid"]
+    edge_length = props["poly_length"]
+    F = props["poly_nF"]
+    T = props["poly_nT"]
+    speed_cat = props["speed_cat"]
+
+    exclusive_FT = props["exclusive_FT"]
+    exclusive_TF = props["exclusive_TF"]
+
+    valuesF = (
+        edge_id,
+        exclusive_FT != -1,
+        edge_length,
+        F,
+        T,
+        props["speed_FT"],
+        speed_cat,
+        props["width_FT"],
+        nth_bit(exclusive_FT, exclusive_encodings["car"]),
+        nth_bit(exclusive_FT, exclusive_encodings["pawn"]),
+        nth_bit(exclusive_FT, exclusive_encodings["bus"]),
+        nth_bit(exclusive_FT, exclusive_encodings["metro"]),
+        nth_bit(exclusive_FT, exclusive_encodings["train"]),
+        nth_bit(exclusive_FT, exclusive_encodings["bike"]),
+        json.dumps(props["forbidden_turns"]),
+        street_name,
+        json.dumps(coords)
+    )
+
+    valuesT = (
+        -edge_id, # T roads get negative index
+        exclusive_TF != -1,
+        edge_length,
+        T,
+        F,
+        props["speed_TF"],
+        speed_cat,
+        props["width_TF"],
+        nth_bit(exclusive_TF, exclusive_encodings["car"]),
+        nth_bit(exclusive_TF, exclusive_encodings["pawn"]),
+        nth_bit(exclusive_TF, exclusive_encodings["bus"]),
+        nth_bit(exclusive_TF, exclusive_encodings["metro"]),
+        nth_bit(exclusive_TF, exclusive_encodings["train"]),
+        nth_bit(exclusive_TF, exclusive_encodings["bike"]),
+        json.dumps(props["forbidden_turns"]),
+        street_name,
+        json.dumps(coords[::-1])
+    )
+
+    values = [valuesF, valuesT]
+    '''if exclusive_FT != -1:
+        values.append(valuesF)
+
+    if exclusive_TF != -1:
+        values.append(valuesT)'''
+    # We need to add also invalid roads because data is retarded
+
+    cursor.executemany('''
+        INSERT INTO geo_edges (
+            edge_id,
+            is_valid,
+            edge_length,
+            node_from_id,
+            node_to_id,
+            speed,
+            speed_cat,
+            width,
+            car_allowed,
+            pawn_allowed,
+            bus_allowed,
+            metro_allowed,
+            train_allowed,
+            bike_allowed,
+            forbidden_turns,
+            street_name,
+            geometry
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    ''', values)
+
 
 # Finalize
 conn.commit()

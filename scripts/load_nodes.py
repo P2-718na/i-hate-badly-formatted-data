@@ -23,7 +23,6 @@ CREATE TABLE geo_nodes (
     PRIMARY KEY(id)
 );
 """
-
 cursor.execute(create_table_sql)
 
 for row in gdf["features"]:
