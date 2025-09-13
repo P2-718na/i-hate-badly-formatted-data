@@ -28,6 +28,8 @@ conn = sqlite3.connect(sqlite_db_path)
 cursor = conn.cursor()
 
 cursor.execute("PRAGMA foreign_keys = ON")
+# Need to drop forbinned turns before geo edges otherwise foreign key breaks
+cursor.execute("DROP TABLE IF EXISTS forbidden_turns;")
 cursor.execute("DROP TABLE IF EXISTS geo_edges;")
 
 create_table_sql = """
@@ -46,7 +48,6 @@ CREATE TABLE geo_edges (
     metro_allowed BOOLEAN,
     train_allowed BOOLEAN,
     bike_allowed BOOLEAN,
-    forbidden_turns TEXT,
     street_name TEXT,
     geometry TEXT,
     PRIMARY KEY(edge_id),
@@ -55,7 +56,19 @@ CREATE TABLE geo_edges (
 );
 """
 cursor.execute(create_table_sql)
+create_table_sql = """
+CREATE TABLE forbidden_turns (
+    edge_source INTEGER NOT NULL,
+    edge_destination INTEGER NOT NULL,
+    FOREIGN KEY(edge_source) REFERENCES geo_edges(edge_id),
+    FOREIGN KEY(edge_destination) REFERENCES geo_edges(edge_id)
+);
+"""
+cursor.execute(create_table_sql)
 
+print("Created tables")
+
+forbidden_turns = {}
 
 for row in gdf["features"]:
     props = row["properties"]
@@ -86,7 +99,6 @@ for row in gdf["features"]:
         nth_bit(exclusive_FT, exclusive_encodings["metro"]),
         nth_bit(exclusive_FT, exclusive_encodings["train"]),
         nth_bit(exclusive_FT, exclusive_encodings["bike"]),
-        json.dumps(props["forbidden_turns"]),
         street_name,
         json.dumps(coords)
     )
@@ -106,10 +118,14 @@ for row in gdf["features"]:
         nth_bit(exclusive_TF, exclusive_encodings["metro"]),
         nth_bit(exclusive_TF, exclusive_encodings["train"]),
         nth_bit(exclusive_TF, exclusive_encodings["bike"]),
-        json.dumps(props["forbidden_turns"]),
         street_name,
         json.dumps(coords[::-1])
     )
+
+    fturns = props["forbidden_turns"]
+    if len(fturns) != 0:
+        forbidden_turns[edge_id] = fturns
+        forbidden_turns[-edge_id] = fturns
 
     values = [valuesF, valuesT]
     '''if exclusive_FT != -1:
@@ -135,12 +151,39 @@ for row in gdf["features"]:
             metro_allowed,
             train_allowed,
             bike_allowed,
-            forbidden_turns,
             street_name,
             geometry
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     ''', values)
 
+conn.commit()
+print("Uploaded edges")
+
+for edge, turns in forbidden_turns.items():
+    values = []
+    for turn in turns:
+        values.append((edge, turn))
+        values.append((edge, -turn))
+    
+    # Some forbidden turns are non existent IDs. We just ignore them
+    # using this sketchy query.
+    # Only edge_destination needs to be checked, as the source is alwasy
+    # added into the db
+    cursor.executemany('''
+        WITH cte(edge_source, edge_destination)
+        AS (VALUES (?, ?))
+        INSERT INTO forbidden_turns (
+            edge_source,
+            edge_destination
+        )
+        SELECT c.edge_source, c.edge_destination
+        FROM cte c
+        WHERE EXISTS (
+            SELECT 1 FROM geo_edges g WHERE g.edge_id = c.edge_destination
+        )
+    ''', values)
+
+print("Uploaded forbidden turns")
 
 # Finalize
 conn.commit()
