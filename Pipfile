@@ -6,6 +6,9 @@ name = "pypi"
 [packages]
 pandas = "*"
 geopandas = "*"
+networkx = "*"
+osmnx = "*"
+matplotlib = "*"
 
 [dev-packages]
 
