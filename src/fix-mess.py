@@ -25,9 +25,9 @@ nx.set_node_attributes(G, values=bc, name="bc")
 
 # plot the graph, coloring nodes by betweenness centrality
 nc = ox.plot.get_node_colors_by_attr(G, "bc", cmap="plasma")
-print("Sborr")
+
 fig, ax = ox.plot.plot_graph(
-    G, bgcolor="k", node_size=50, node_color=nc, edge_linewidth=2, edge_color="#333333", save=True, filepath="stocazzo.png"
+    G, bgcolor="k", node_size=50, node_color=nc, edge_linewidth=2, edge_color="#333333", save=True, filepath="graph.png"
 )
 ##
 

@@ -91,27 +91,27 @@
     }
 
     function getColor({ properties: { poly_cid : edge_id, poly_length : edge_length } }, cache, time) {
-      //if (!db) {
-		return '#3388ff';
-	  //}
+    if (!db) {
+		  return '#3388ff';
+	  }
 	  
 	  if (!cache[time]) {
-		cacheTraffic(cache, time);
+		  cacheTraffic(cache, time);
 	  }
 	  
 	  const data = cache[time];
 	  
-	  const F = data[edge_id + "F"];
-	  const T = data[edge_id + "T"];
+	  const F = data[edge_id];
+	  const T = data[-edge_id];
 	  
 	  const min_length = 2;
-	  const max_flow = 4500 / min_length 
+	  const max_flow = 3000 / min_length 
 	  
 	  let flow = ((F+T)/2) || F || T || 0
 	  flow /= edge_length;
 	  
 	  if (flow < .5) {
-		return "rgba(0, 255, 0, 0)";
+		  return "rgba(0, 255, 0, 0)";
 	  }
 	 
 	  
